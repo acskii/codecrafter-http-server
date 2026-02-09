@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -24,7 +25,35 @@ func main() {
 		}
 
 		go func(c net.Conn) {
+			// Read the request
+			buffer := make([]byte, 1024)
+			n, err := c.Read(buffer)
+			if (err != nil) {
+				fmt.Println("Error reading request: ", err.Error())
+				c.Close()
+			}
+			// Extract the request line
+			data := string(buffer[:n])
+			requestLine := strings.SplitN(data, "\r\n", 2)[0]
+			parts := strings.Split(requestLine, " ")
+
 			response := "HTTP/1.1 200 OK\r\n\r\n"
+
+			if (len(parts) > 0) {
+				method := parts[0]
+				// obtain request target
+				target := parts[1]
+
+				if (method == "GET") {
+					// Ensure the method is GET
+					// check for target and send response
+					if (target != "/") {
+						response = "HTTP/1.1 404 Not Found\r\n\r\n"
+					}
+				}
+			} else {
+				response = "HTTP/1.1 404 Not Found\r\n\r\n"
+			}
 			c.Write([]byte(response))
 			c.Close()
 		}(conn)
