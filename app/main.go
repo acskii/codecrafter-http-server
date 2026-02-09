@@ -23,7 +23,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		go func (c net.Conn) {
+		go func(c net.Conn) {
 			response := "HTTP/1.1 200 OK\r\n\r\n"
 			c.Write([]byte(response))
 			c.Close()
