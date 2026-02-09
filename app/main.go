@@ -7,6 +7,22 @@ import (
 	"strings"
 )
 
+func handleEcho(conn net.Conn, s string) {
+	response := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(s), s)
+	conn.Write([]byte(response))
+}
+
+func routingGET(conn net.Conn, route string) {
+	switch {
+	case strings.HasPrefix(route, "/echo/"):
+		handleEcho(conn, route[len("/echo/"):])
+	case route == "/":
+		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	default: 
+		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+	}
+}
+
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	fmt.Println("Logs from your program will appear here!")
@@ -37,8 +53,6 @@ func main() {
 			requestLine := strings.SplitN(data, "\r\n", 2)[0]
 			parts := strings.Split(requestLine, " ")
 
-			response := "HTTP/1.1 200 OK\r\n\r\n"
-
 			if (len(parts) > 0) {
 				method := parts[0]
 				// obtain request target
@@ -47,14 +61,11 @@ func main() {
 				if (method == "GET") {
 					// Ensure the method is GET
 					// check for target and send response
-					if (target != "/") {
-						response = "HTTP/1.1 404 Not Found\r\n\r\n"
-					}
+					routingGET(c, target)
 				}
 			} else {
-				response = "HTTP/1.1 404 Not Found\r\n\r\n"
+				c.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
 			}
-			c.Write([]byte(response))
 			c.Close()
 		}(conn)
 	}
