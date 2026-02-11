@@ -12,15 +12,47 @@ func handleEcho(conn net.Conn, s string) {
 	conn.Write([]byte(response))
 }
 
-func routingGET(conn net.Conn, route string) {
+func handleUserAgent(conn net.Conn, headers map[string]string) {
+	agent := headers["User-Agent"]
+	response := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(agent), agent)
+	conn.Write([]byte(response))
+}
+
+func routingGET(conn net.Conn, route string, headers map[string]string) {
 	switch {
 	case strings.HasPrefix(route, "/echo/"):
 		handleEcho(conn, route[len("/echo/"):])
+	case strings.HasPrefix(route, "/user-agent"):
+		handleUserAgent(conn, headers)
 	case route == "/":
 		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 	default: 
 		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
 	}
+}
+
+func getHeaders(request string) map[string]string {
+	// Separate by \r\n
+	lines := strings.Split(request, "\r\n")
+	headers := make(map[string]string)
+
+	// Skip the request line
+	for i := 1; i < len(lines); i++ {
+		line := lines[i]
+
+		// Stop at \r\n\r\n
+		if line == "" {
+			break
+		}
+
+		// Get header and value
+		parts := strings.SplitN(line, ": ", 2)
+		if len(parts) == 2 {
+			headers[parts[0]] = parts[1]
+		}
+	}
+
+	return headers
 }
 
 func main() {
@@ -48,9 +80,12 @@ func main() {
 				fmt.Println("Error reading request: ", err.Error())
 				c.Close()
 			}
-			// Extract the request line
 			data := string(buffer[:n])
+			// Extract the request line
 			requestLine := strings.SplitN(data, "\r\n", 2)[0]
+			// Extract the headers
+			headers := getHeaders(data)
+
 			parts := strings.Split(requestLine, " ")
 
 			if (len(parts) > 0) {
@@ -61,7 +96,7 @@ func main() {
 				if (method == "GET") {
 					// Ensure the method is GET
 					// check for target and send response
-					routingGET(c, target)
+					routingGET(c, target, headers)
 				}
 			} else {
 				c.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
