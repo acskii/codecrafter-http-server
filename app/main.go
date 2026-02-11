@@ -8,79 +8,96 @@ import (
 	"path/filepath"
 )
 
+type Request struct {
+    Method  string
+    Path    string
+    Headers map[string]string
+    Body    string
+}
+
 func handleEcho(conn net.Conn, s string) {
-	response := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(s), s)
-	conn.Write([]byte(response))
+	sendResponse(conn, "200 OK", "text/plain", s)
 }
 
 func handleUserAgent(conn net.Conn, headers map[string]string) {
 	agent := headers["User-Agent"]
-	response := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n%s", len(agent), agent)
-	conn.Write([]byte(response))
+	sendResponse(conn, "200 OK", "text/plain", agent)
 }
 
 func handleFiles(conn net.Conn, file string) {
-	response := "HTTP/1.1 404 Not Found\r\n\r\n"
 	if os.Args[1] == "--directory" {
 		path := filepath.Join(os.Args[2], file)
 		content, err := os.ReadFile(path)
 		if err != nil {
 			fmt.Println("Failed to read file")
+			sendResponse(conn, "404 Not Found", "text/plain", "")
 		} else {
-			response = fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\n\r\n%s", len(content), content)
+			sendResponse(conn, "200 OK", "application/octet-stream", string(content))
 		}
 	}
-	conn.Write([]byte(response))
 }
 
 func handlePostFiles(conn net.Conn, file string, content string) {
 	if os.Args[1] == "--directory" {
 		path := filepath.Join(os.Args[2], file)
 		data := []byte(content)
-		response := "HTTP/1.1 403 Bad Request\r\n\r\n"
-
 		err := os.WriteFile(path, data, 0644)
+
 		if err != nil {
 			fmt.Println("Failed to write file")
+			sendResponse(conn, "403 Bad Request", "text/plain", "")
 		} else {
-			response = "HTTP/1.1 201 Created\r\n\r\n"
+			sendResponse(conn, "201 Created", "text/plain", "")
 		}
-		conn.Write([]byte(response))
 	}
 }
 
-func routingGET(conn net.Conn, route string, headers map[string]string) {
+func routingGET(conn net.Conn, req *Request) {
+	route := req.Path
+
 	switch {
 	case strings.HasPrefix(route, "/echo/"):
 		handleEcho(conn, route[len("/echo/"):])
 	case strings.HasPrefix(route, "/user-agent"):
-		handleUserAgent(conn, headers)
+		handleUserAgent(conn, req.Headers)
 	case strings.HasPrefix(route, "/files/"):
 		handleFiles(conn, route[len("/files/"):])
 	case route == "/":
-		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+		sendResponse(conn, "200 OK", "text/plain", "")
 	default: 
-		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+		sendResponse(conn, "404 Not Found", "text/plain", "")
 	}
 }
 
-func routingPOST(conn net.Conn, route string, body string) {
+func routingPOST(conn net.Conn, req *Request) {
+	route := req.Path
+
 	switch {
 	case strings.HasPrefix(route, "/files/"):
-		handlePostFiles(conn, route[len("/files/"):], body)
+		handlePostFiles(conn, route[len("/files/"):], req.Body)
 	default: 
 		conn.Write([]byte("HTTP/1.1 403 Bad Request\r\n\r\n"))
 	}
 }
 
-func getHeaders(request string) map[string]string {
-	// Separate by \r\n
-	lines := strings.Split(request, "\r\n")
+func parseRequest(request string) *Request {
+	parts := strings.Split(request, "\r\n")
+
+	if (len(parts) == 0) {
+		return nil
+	}
+
+	// Extract request line
+	requestLine := strings.Split(parts[0], " ")
+	method := requestLine[0]
+	path := requestLine[1]
+
+	// Extract request headers
 	headers := make(map[string]string)
 
 	// Skip the request line
-	for i := 1; i < len(lines); i++ {
-		line := lines[i]
+	for i := 1; i < len(parts); i++ {
+		line := parts[i]
 
 		// Stop at \r\n\r\n
 		if line == "" {
@@ -88,70 +105,74 @@ func getHeaders(request string) map[string]string {
 		}
 
 		// Get header and value
-		parts := strings.SplitN(line, ": ", 2)
-		if len(parts) == 2 {
-			headers[parts[0]] = parts[1]
+		l := strings.SplitN(line, ": ", 2)
+		if len(l) == 2 {
+			headers[l[0]] = l[1]
 		}
 	}
 
-	return headers
+	// Extract request body
+	body := strings.SplitN(request, "\r\n\r\n", 2)[1]
+
+	// Return Request object
+	return &Request {
+		Method:  method,
+		Path:    path,
+		Headers: headers,
+		Body:	 body,
+	}
 }
 
-func getBody(request string) string {
-	return strings.SplitN(request, "\r\n\r\n", 2)[1]
+func sendResponse(conn net.Conn, status string, contentType string, body string) {
+    response := fmt.Sprintf("HTTP/1.1 %s\r\n", status)
+    response += fmt.Sprintf("Content-Type: %s\r\n", contentType)
+    response += fmt.Sprintf("Content-Length: %d\r\n", len(body))
+    response += "\r\n"
+    response += body
+    conn.Write([]byte(response))
+}
+
+func handleConnection(conn net.Conn) {
+	defer conn.Close()
+	
+	// Read the request
+	buffer := make([]byte, 1024)
+	n, err := conn.Read(buffer)
+	if (err != nil) {
+		fmt.Println("Error reading request: ", err.Error())
+		conn.Close()
+	}
+	data := string(buffer[:n])
+
+	// Extract the request components
+	req := parseRequest(data)
+
+	if (req != nil) {
+		if (req.Method == "GET") {
+			routingGET(conn, req)
+		} else if (req.Method == "POST") {
+			routingPOST(conn, req)
+		}
+	} else {
+		sendResponse(conn, "404 Not Found", "text/plain", "")
+	}
 }
 
 func main() {
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	fmt.Println("Logs from your program will appear here!")
+	fmt.Println("Server started!")
 
 	l, err := net.Listen("tcp", ":4221")
 	if err != nil {
 		fmt.Println("Failed to bind to port 4221")
-		os.Exit(1)
+        os.Exit(1)
 	}
 	
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			fmt.Println("Error accepting connection: ", err.Error())
-			os.Exit(1)
+			return
 		}
-
-		go func(c net.Conn) {
-			// Read the request
-			buffer := make([]byte, 1024)
-			n, err := c.Read(buffer)
-			if (err != nil) {
-				fmt.Println("Error reading request: ", err.Error())
-				c.Close()
-			}
-			data := string(buffer[:n])
-			// Extract the request line
-			requestLine := strings.SplitN(data, "\r\n", 2)[0]
-			// Extract the headers
-			headers := getHeaders(data)
-			// Extract the request body
-			body := getBody(data)
-
-			parts := strings.Split(requestLine, " ")
-
-			if (len(parts) > 0) {
-				method := parts[0]
-				// obtain request target
-				target := parts[1]
-
-				if (method == "GET") {
-					// Ensure the method is GET
-					// check for target and send response
-					routingGET(c, target, headers)
-				} else if (method == "POST") {
-					routingPOST(c, target, body)
-				}
-			} else {
-				c.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
-			}
-			c.Close()
-		}(conn)
+		go handleConnection(conn)
 	}
 }
