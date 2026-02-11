@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"path/filepath"
 )
 
 func handleEcho(conn net.Conn, s string) {
@@ -18,12 +19,28 @@ func handleUserAgent(conn net.Conn, headers map[string]string) {
 	conn.Write([]byte(response))
 }
 
+func handleFiles(conn net.Conn, file string) {
+	response := "HTTP/1.1 404 Not Found\r\n\r\n"
+	if os.Args[1] == "--directory" {
+		path := filepath.Join(os.Args[2], file)
+		content, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Println("Failed to read file")
+		} else {
+			response = fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\n\r\n%s", len(content), content)
+		}
+	}
+	conn.Write([]byte(response))
+}
+
 func routingGET(conn net.Conn, route string, headers map[string]string) {
 	switch {
 	case strings.HasPrefix(route, "/echo/"):
 		handleEcho(conn, route[len("/echo/"):])
 	case strings.HasPrefix(route, "/user-agent"):
 		handleUserAgent(conn, headers)
+	case strings.HasPrefix(route, "/files/"):
+		handleFiles(conn, route[len("/files/"):])
 	case route == "/":
 		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 	default: 
