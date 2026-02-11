@@ -33,6 +33,22 @@ func handleFiles(conn net.Conn, file string) {
 	conn.Write([]byte(response))
 }
 
+func handlePostFiles(conn net.Conn, file string, content string) {
+	if os.Args[1] == "--directory" {
+		path := filepath.Join(os.Args[2], file)
+		data := []byte(content)
+		response := "HTTP/1.1 403 Bad Request\r\n\r\n"
+
+		err := os.WriteFile(path, data, 0644)
+		if err != nil {
+			fmt.Println("Failed to write file")
+		} else {
+			response = "HTTP/1.1 201 Created\r\n\r\n"
+		}
+		conn.Write([]byte(response))
+	}
+}
+
 func routingGET(conn net.Conn, route string, headers map[string]string) {
 	switch {
 	case strings.HasPrefix(route, "/echo/"):
@@ -45,6 +61,15 @@ func routingGET(conn net.Conn, route string, headers map[string]string) {
 		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 	default: 
 		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+	}
+}
+
+func routingPOST(conn net.Conn, route string, body string) {
+	switch {
+	case strings.HasPrefix(route, "/files/"):
+		handlePostFiles(conn, route[len("/files/"):], body)
+	default: 
+		conn.Write([]byte("HTTP/1.1 403 Bad Request\r\n\r\n"))
 	}
 }
 
@@ -70,6 +95,10 @@ func getHeaders(request string) map[string]string {
 	}
 
 	return headers
+}
+
+func getBody(request string) string {
+	return strings.SplitN(request, "\r\n\r\n", 2)[1]
 }
 
 func main() {
@@ -102,6 +131,8 @@ func main() {
 			requestLine := strings.SplitN(data, "\r\n", 2)[0]
 			// Extract the headers
 			headers := getHeaders(data)
+			// Extract the request body
+			body := getBody(data)
 
 			parts := strings.Split(requestLine, " ")
 
@@ -114,6 +145,8 @@ func main() {
 					// Ensure the method is GET
 					// check for target and send response
 					routingGET(c, target, headers)
+				} else if (method == "POST") {
+					routingPOST(c, target, body)
 				}
 			} else {
 				c.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
