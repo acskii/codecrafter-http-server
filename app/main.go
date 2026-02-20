@@ -15,39 +15,40 @@ type Request struct {
     Body    string
 }
 
-func handleEcho(conn net.Conn, s string) {
-	sendResponse(conn, "200 OK", "text/plain", s)
+func handleEcho(conn net.Conn, req *Request, s string) {
+	sendResponse(conn, req, "200 OK", "text/plain", s + "\n")
 }
 
-func handleUserAgent(conn net.Conn, headers map[string]string) {
-	agent := headers["User-Agent"]
-	sendResponse(conn, "200 OK", "text/plain", agent)
+func handleUserAgent(conn net.Conn, req *Request) {
+	agent := req.Headers["User-Agent"]
+	sendResponse(conn, req, "200 OK", "text/plain", agent + "\n")
 }
 
-func handleFiles(conn net.Conn, file string) {
+func handleFiles(conn net.Conn, req *Request, file string) {
 	if os.Args[1] == "--directory" {
 		path := filepath.Join(os.Args[2], file)
 		content, err := os.ReadFile(path)
 		if err != nil {
 			fmt.Println("Failed to read file")
-			sendResponse(conn, "404 Not Found", "text/plain", "")
+			sendResponse(conn, req, "404 Not Found", "text/plain", "")
 		} else {
-			sendResponse(conn, "200 OK", "application/octet-stream", string(content))
+			sendResponse(conn, req, "200 OK", "application/octet-stream", string(content))
 		}
 	}
 }
 
-func handlePostFiles(conn net.Conn, file string, content string) {
+func handlePostFiles(conn net.Conn, req *Request, file string) {
 	if os.Args[1] == "--directory" {
+		content := req.Body
 		path := filepath.Join(os.Args[2], file)
 		data := []byte(content)
 		err := os.WriteFile(path, data, 0644)
 
 		if err != nil {
 			fmt.Println("Failed to write file")
-			sendResponse(conn, "403 Bad Request", "text/plain", "")
+			sendResponse(conn, req, "403 Bad Request", "text/plain", "")
 		} else {
-			sendResponse(conn, "201 Created", "text/plain", "")
+			sendResponse(conn, req, "201 Created", "text/plain", "")
 		}
 	}
 }
@@ -57,15 +58,15 @@ func routingGET(conn net.Conn, req *Request) {
 
 	switch {
 	case strings.HasPrefix(route, "/echo/"):
-		handleEcho(conn, route[len("/echo/"):])
+		handleEcho(conn, req, route[len("/echo/"):])
 	case strings.HasPrefix(route, "/user-agent"):
-		handleUserAgent(conn, req.Headers)
+		handleUserAgent(conn, req)
 	case strings.HasPrefix(route, "/files/"):
-		handleFiles(conn, route[len("/files/"):])
+		handleFiles(conn, req, route[len("/files/"):])
 	case route == "/":
-		sendResponse(conn, "200 OK", "text/plain", "")
+		sendResponse(conn, req, "200 OK", "text/plain", "")
 	default: 
-		sendResponse(conn, "404 Not Found", "text/plain", "")
+		sendResponse(conn, req, "404 Not Found", "text/plain", "")
 	}
 }
 
@@ -74,7 +75,7 @@ func routingPOST(conn net.Conn, req *Request) {
 
 	switch {
 	case strings.HasPrefix(route, "/files/"):
-		handlePostFiles(conn, route[len("/files/"):], req.Body)
+		handlePostFiles(conn, req, route[len("/files/"):])
 	default: 
 		conn.Write([]byte("HTTP/1.1 403 Bad Request\r\n\r\n"))
 	}
@@ -123,11 +124,16 @@ func parseRequest(request string) *Request {
 	}
 }
 
-func sendResponse(conn net.Conn, status string, contentType string, body string) {
+func sendResponse(conn net.Conn, req *Request, status string, contentType string, body string) {
     response := fmt.Sprintf("HTTP/1.1 %s\r\n", status)
     response += fmt.Sprintf("Content-Type: %s\r\n", contentType)
     response += fmt.Sprintf("Content-Length: %d\r\n", len(body))
-    response += "\r\n"
+
+	if (req.Headers["Connection"] == "close") {
+		response += "Connection: close\r\n"
+	}
+
+	response += "\r\n"
     response += body
     conn.Write([]byte(response))
 }
@@ -135,26 +141,35 @@ func sendResponse(conn net.Conn, status string, contentType string, body string)
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 	
-	// Read the request
-	buffer := make([]byte, 1024)
-	n, err := conn.Read(buffer)
-	if (err != nil) {
-		fmt.Println("Error reading request: ", err.Error())
-		conn.Close()
-	}
-	data := string(buffer[:n])
-
-	// Extract the request components
-	req := parseRequest(data)
-
-	if (req != nil) {
-		if (req.Method == "GET") {
-			routingGET(conn, req)
-		} else if (req.Method == "POST") {
-			routingPOST(conn, req)
+	for {
+		// Read the request
+		buffer := make([]byte, 1024)
+		n, err := conn.Read(buffer)
+		if (err != nil) {
+			if (err.Error() != "EOF") {
+				fmt.Println("Error reading request: ", err.Error())
+			}
+			return
 		}
-	} else {
-		sendResponse(conn, "404 Not Found", "text/plain", "")
+		data := string(buffer[:n])
+
+		// Extract the request components
+		req := parseRequest(data)
+
+		if (req != nil) {
+			if (req.Method == "GET") {
+				routingGET(conn, req)
+			} else if (req.Method == "POST") {
+				routingPOST(conn, req)
+			}
+
+			if (req.Headers["Connection"] == "close") {
+				break
+			}
+		} else {
+			sendResponse(conn, req, "404 Not Found", "text/plain", "")
+			return
+		}
 	}
 }
 
