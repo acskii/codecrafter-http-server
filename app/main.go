@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
-	"github.com/codecrafters-io/http-server-starter-go/app/service"
+	"github.com/acskii/codecrafter-http-server/app/service"
 )
 
 func main() {
